@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Photo Heart Fill System</title>
+    <title>Explosive Heart Photo System</title>
     <style>
         /* CSS 样式设置 */
         * {
@@ -13,11 +13,12 @@
         }
 
         body {
-            background: radial-gradient(circle at center, #2b0a0a, #0d0000); /* 更深沉浪漫的背景 */
+            background: radial-gradient(circle at center, #1a0505, #000000); /* 极夜黑红背景 */
             overflow: hidden;
             height: 100vh;
             width: 100vw;
             font-family: 'Arial', sans-serif;
+            cursor: crosshair; /* 鼠标样式改为十字准星，更有交互感 */
         }
 
         canvas {
@@ -35,38 +36,37 @@
             left: 0;
             width: 100%;
             height: 70px;
-            background: rgba(0, 0, 0, 0.6); /* 半透明黑色背景 */
-            backdrop-filter: blur(10px); /* 毛玻璃效果 */
+            background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
             display: flex;
             justify-content: center;
             align-items: center;
             z-index: 100;
-            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            pointer-events: none; /* 让鼠标事件穿透，除非点到按钮 */
         }
 
-        /* 文件上传按钮美化 */
         .upload-btn-wrapper {
+            pointer-events: auto; /* 恢复按钮点击 */
             position: relative;
             overflow: hidden;
             display: inline-block;
         }
 
         .btn {
-            border: 2px solid #ff4d6d;
-            color: white;
-            background-color: transparent;
-            padding: 10px 25px;
+            border: 1px solid rgba(255, 77, 109, 0.5);
+            color: #ffb3c1;
+            background-color: rgba(0, 0, 0, 0.5);
+            padding: 8px 20px;
             border-radius: 30px;
-            font-size: 16px;
-            font-weight: bold;
+            font-size: 14px;
             cursor: pointer;
             transition: all 0.3s ease;
-            box-shadow: 0 0 10px rgba(255, 77, 109, 0.3);
+            backdrop-filter: blur(5px);
         }
 
         .btn:hover {
             background-color: #ff4d6d;
-            box-shadow: 0 0 20px rgba(255, 77, 109, 0.6);
+            color: white;
+            box-shadow: 0 0 15px #ff4d6d;
         }
 
         .upload-btn-wrapper input[type=file] {
@@ -82,23 +82,25 @@
 
         .hint-text {
             position: absolute;
-            bottom: 80px;
+            top: 20px;
             width: 100%;
             text-align: center;
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 14px;
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 12px;
+            letter-spacing: 2px;
             pointer-events: none;
             z-index: 10;
+            text-transform: uppercase;
         }
     </style>
 </head>
 <body>
 
-    <div class="hint-text">移动鼠标交互 · 按空格键心跳</div>
+    <div class="hint-text">Space to Explode · Mouse to Wander</div>
 
     <div class="bottom-bar">
         <div class="upload-btn-wrapper">
-            <button class="btn">✨ 点击这里添加多张照片 ✨</button>
+            <button class="btn">📂 添加多张照片 (Add Photos)</button>
             <input type="file" id="imageInput" multiple accept="image/*">
         </div>
     </div>
@@ -112,51 +114,42 @@
         
         let width, height;
         let particles = [];
-        // 粒子数量。因为要实时裁剪图片，性能开销较大，数量不宜过多。
-        // 如果电脑性能好，可以尝试调到 800-1000。
-        let particleCount = 600; 
+        let particleCount = 600; // 粒子数量
+        let userPhotos = []; 
         
-        let userPhotos = []; // 存储用户上传的照片对象
+        // --- 核心状态变量 ---
+        // 鼠标位置
+        let mouseX = window.innerWidth / 2;
+        let mouseY = window.innerHeight / 2;
         
-        const mouse = { x: null, y: null, radius: 120 };
-        let isBeating = false;
+        // 爱心当前的中心点（用于平滑跟随鼠标）
+        let heartCenterX = window.innerWidth / 2;
+        let heartCenterY = window.innerHeight / 2;
 
-        // 初始化尺寸
+        // 爆发动画变量
+        let explosionScale = 0; // 0 = 正常, 15 = 爆发最大值
+        let isExploding = false; // 是否正在爆发中
+        let isImploding = false; // 是否正在收缩中
+
         function resize() {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
-            // 窗口大小改变时，如果已经有照片，重新分布粒子
             if (userPhotos.length > 0) initParticles(); 
         }
         window.addEventListener('resize', resize);
         resize();
 
-        // --- 核心数学逻辑 ---
-
-        // 判断一个点 (x, y) 是否在屏幕中心的大爱心内部
-        // 使用爱心隐函数公式: (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0
-        function isInsideHeart(x, y) {
-            // 1. 将屏幕坐标转换为相对于中心的坐标
-            let relX = x - width / 2;
-            let relY = y - height / 2;
-            
-            // 2. 缩放坐标以匹配公式的范围 (大致在 -1.5 到 1.5 之间)
-            // scale 越大，爱心在屏幕上显示得越小
-            const scale = Math.min(width, height) / 4; 
-            relX /= scale;
-            relY /= -scale; // Y轴反转，因为 Canvas Y轴向下
-
-            // 3. 应用爱心方程
+        // 爱心方程判断 (用于初始化位置)
+        function isInsideHeart(x, y, cx, cy, scale) {
+            let relX = (x - cx) / scale;
+            let relY = (y - cy) / -scale;
             const a = relX * relX + relY * relY - 1;
-            // 如果结果 <= 0，则点在爱心内部或边界上
             return a * a * a - relX * relX * relY * relY * relY <= 0;
         }
 
-        // 绘制小爱心路径 (用于裁剪照片粒子)
-        // 在当前坐标系原点绘制一个尺寸为 size 的爱心
+        // 绘制裁剪路径
         function drawSmallHeartPath(ctx, size) {
              ctx.beginPath();
-             // 贝塞尔曲线绘制心形
              ctx.moveTo(0, -size * 0.25);
              ctx.bezierCurveTo(0, -size * 0.5, -size * 0.5, -size * 0.5, -size * 0.5, -size * 0.25);
              ctx.bezierCurveTo(-size * 0.5, 0, 0, size * 0.25, 0, size * 0.5);
@@ -165,73 +158,58 @@
              ctx.closePath();
         }
 
-
-        // --- 粒子类定义 ---
         class PhotoParticle {
             constructor(img) {
-                this.img = img; // 这个粒子要显示的照片
-                this.findRandomPositionInHeart(); // 找到一个在爱心内部的随机位置
+                this.img = img;
+                // 计算相对坐标 (相对于爱心中心点的偏移量)
+                this.calculateRelativePosition();
                 
-                // 粒子大小随机
                 this.size = Math.random() * 20 + 15; 
                 this.baseSize = this.size;
-                
-                this.density = (Math.random() * 20) + 5;
-                // 随机初始角度，让照片看起来散乱随意一点
                 this.angle = Math.random() * Math.PI * 2 - Math.PI; 
+                
+                // 初始位置设为屏幕外，让它们飞进来
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
             }
 
-            // 核心算法：不断尝试随机点，直到找到一个在爱心内部的点
-            findRandomPositionInHeart() {
+            calculateRelativePosition() {
                  let attempt = 0;
-                 const maxAttempts = 2000; // 防止死循环
-                 while (attempt < maxAttempts) {
-                     // 在屏幕中心区域随机取点
-                     const margin = Math.min(width, height) * 0.1;
-                     const testX = Math.random() * (width - 2*margin) + margin;
-                     const testY = Math.random() * (height - 2*margin) + margin;
+                 // 虚拟的一个中心点和缩放，用来计算相对位置
+                 const dummyCX = 0; 
+                 const dummyCY = 0;
+                 const dummyScale = Math.min(width, height) / 4; 
+                 
+                 while (attempt < 2000) {
+                     const testX = (Math.random() - 0.5) * width; // -width/2 到 width/2
+                     const testY = (Math.random() - 0.5) * height;
 
-                     if (isInsideHeart(testX, testY)) {
-                         this.baseX = testX;
-                         this.baseY = testY;
-                         this.x = testX;
-                         this.y = testY;
-                         return; // 找到了，退出循环
+                     if (isInsideHeart(testX, testY, dummyCX, dummyCY, dummyScale)) {
+                         this.relX = testX; // 记录相对偏移量
+                         this.relY = testY;
+                         return;
                      }
                      attempt++;
                  }
-                 // 如果实在找不到，就放在中心（理论上不会发生）
-                 this.baseX = width / 2;
-                 this.baseY = height / 2;
+                 this.relX = 0;
+                 this.relY = 0;
             }
 
             draw() {
                 if (!this.img) return;
-                
                 ctx.save();
-                // 移动画布原点到粒子当前位置
                 ctx.translate(this.x, this.y);
-                // 旋转粒子
-                ctx.rotate(this.angle);
+                ctx.rotate(this.angle + (explosionScale * 0.1)); // 爆发时旋转加剧
+                
+                // 爆发时粒子也会轻微变大
+                let currentSize = this.size * (1 + explosionScale * 0.1);
 
-                // 心跳时的缩放效果
-                let scale = 1;
-                if (isBeating) {
-                    scale = 1.2; // 放大倍数
-                }
-                // 平滑过渡大小
-                this.size = this.size + (this.baseSize * scale - this.size) * 0.1;
+                drawSmallHeartPath(ctx, currentSize);
+                ctx.clip(); 
 
-                // --- 关键步骤：裁剪图片成爱心 ---
-                drawSmallHeartPath(ctx, this.size);
-                ctx.clip(); // 将当前路径设置为裁剪区域
-
-                // 绘制图片到裁剪区域内
-                // 保持图片比例居中裁剪
                 const imgAspect = this.img.width / this.img.height;
                 let drawW, drawH;
-                // 让图片稍微比裁剪区域大一点，确保填满
-                const renderSize = this.size * 1.2;
+                const renderSize = currentSize * 1.2;
 
                 if (imgAspect > 1) {
                     drawH = renderSize;
@@ -240,85 +218,72 @@
                     drawW = renderSize;
                     drawH = renderSize / imgAspect;
                 }
-                // 居中绘制
                 ctx.drawImage(this.img, -drawW/2, -drawH/2, drawW, drawH);
-
-                ctx.restore(); // 恢复画布状态，避免影响下一个粒子
+                ctx.restore();
             }
 
             update() {
-                // 鼠标交互 (斥力)
-                let dx = mouse.x - this.x;
-                let dy = mouse.y - this.y;
-                let distance = Math.sqrt(dx * dx + dy * dy);
-                let forceDirectionX = dx / distance;
-                let forceDirectionY = dy / distance;
-                
-                let maxDistance = mouse.radius;
-                let force = (maxDistance - distance) / maxDistance;
-                if (force < 0) force = 0;
+                // 1. 计算当前的“目标”中心点 (平滑跟随鼠标)
+                // lerp 算法: current = current + (target - current) * speed
+                heartCenterX += (mouseX - heartCenterX) * 0.05;
+                heartCenterY += (mouseY - heartCenterY) * 0.05;
 
-                let directionX = forceDirectionX * force * this.density;
-                let directionY = forceDirectionY * force * this.density;
-
-                // 心跳膨胀位移
-                let beatOffsetX = 0;
-                let beatOffsetY = 0;
-                if (isBeating) {
-                    beatOffsetX = (this.baseX - width/2) * 0.1;
-                    beatOffsetY = (this.baseY - height/2) * 0.1;
+                // 2. 计算爆发倍率
+                if (isExploding) {
+                    // 爆发：快速变大
+                    explosionScale += (20 - explosionScale) * 0.08;
+                    if (explosionScale > 19.5) {
+                        isExploding = false;
+                        isImploding = true;
+                    }
+                } else if (isImploding) {
+                    // 收缩：缓慢变小
+                    explosionScale += (0 - explosionScale) * 0.03;
+                    if (explosionScale < 0.1) {
+                        explosionScale = 0;
+                        isImploding = false;
+                    }
                 }
 
-                if (distance < mouse.radius) {
-                    this.x -= directionX;
-                    this.y -= directionY;
-                } else {
-                    // 回归原位 + 心跳偏移
-                    this.x += (this.baseX + beatOffsetX - this.x) * 0.05;
-                    this.y += (this.baseY + beatOffsetY - this.y) * 0.05;
-                }
-                
+                // 3. 计算粒子的目标位置
+                // 目标 X = 当前爱心中心X + (相对偏移X * (1 + 爆发倍率))
+                let targetX = heartCenterX + this.relX * (1 + explosionScale);
+                let targetY = heartCenterY + this.relY * (1 + explosionScale);
+
+                // 4. 移动粒子 (弹性移动)
+                this.x += (targetX - this.x) * 0.1;
+                this.y += (targetY - this.y) * 0.1;
+
                 this.draw();
             }
         }
 
-
-        // --- 系统控制 ---
-
         function initParticles() {
             particles = [];
             if (userPhotos.length === 0) return;
-
             for (let i = 0; i < particleCount; i++) {
-                // 循环使用用户上传的照片
                 const img = userPhotos[i % userPhotos.length];
                 particles.push(new PhotoParticle(img));
             }
         }
 
         function animate() {
+            // 使用半透明清除，制造一点点拖尾效果 (可选，这里用全清除保持清晰)
             ctx.clearRect(0, 0, width, height);
             
             for (let i = 0; i < particles.length; i++) {
                 particles[i].update();
-            }
-
-            if (isBeating) {
-                setTimeout(() => { isBeating = false; }, 200);
             }
             requestAnimationFrame(animate);
         }
 
         // --- 事件监听 ---
 
-        // 处理图片上传
         imageInput.addEventListener('change', function(e) {
             const files = e.target.files;
             if (files.length === 0) return;
-
-            userPhotos = []; // 清空旧照片
+            userPhotos = [];
             let filesLoaded = 0;
-
             for (let i = 0; i < files.length; i++) {
                 const reader = new FileReader();
                 reader.onload = function(event) {
@@ -326,10 +291,7 @@
                     img.onload = function() {
                         userPhotos.push(img);
                         filesLoaded++;
-                        // 当所有选择的图片都加载完成后，初始化粒子系统
-                        if (filesLoaded === files.length) {
-                            initParticles();
-                        }
+                        if (filesLoaded === files.length) initParticles();
                     };
                     img.src = event.target.result;
                 };
@@ -337,35 +299,43 @@
             }
         });
 
+        // 鼠标移动更新目标坐标
         window.addEventListener('mousemove', (e) => {
-            mouse.x = e.x;
-            mouse.y = e.y;
+            mouseX = e.clientX;
+            mouseY = e.clientY;
         });
+
+        // 鼠标离开窗口，爱心回到中心
         window.addEventListener('mouseout', () => {
-             mouse.x = undefined; mouse.y = undefined;
+             mouseX = width / 2;
+             mouseY = height / 2;
         });
 
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
                 e.preventDefault();
-                isBeating = true;
+                // 触发爆发状态
+                if (!isExploding && !isImploding) {
+                    isExploding = true;
+                }
             }
         });
 
-        // 启动动画循环
         animate();
         
-        // 初始状态下，可以画一个空的提示，或者什么都不画等待上传
-        // 这里为了引导用户，在没有照片时，在中心画一个提示文字
+        // 初始文字引导
         function drawInitialHint() {
             if (userPhotos.length === 0) {
-                ctx.fillStyle = "rgba(255, 192, 203, 0.2)";
-                ctx.font = "30px Arial";
+                ctx.save();
+                ctx.fillStyle = "rgba(255, 192, 203, 0.3)";
+                ctx.font = "bold 24px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("请在底部添加照片...", width/2, height/2);
+                ctx.shadowColor = "#ff4d6d";
+                ctx.shadowBlur = 10;
+                ctx.fillText("✨ 请添加照片开启浪漫 ✨", width/2, height/2);
+                ctx.restore();
             }
         }
-        // 将这个提示加入动画循环中
         const originalAnimate = animate;
         animate = function() {
             originalAnimate();
