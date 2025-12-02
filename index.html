@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Explosive Heart Photo System</title>
+    <title>Zoom & Chaos Heart System</title>
     <style>
         /* CSS 样式设置 */
         * {
@@ -18,7 +18,7 @@
             height: 100vh;
             width: 100vw;
             font-family: 'Arial', sans-serif;
-            cursor: crosshair; /* 鼠标样式改为十字准星，更有交互感 */
+            cursor: crosshair;
         }
 
         canvas {
@@ -29,7 +29,7 @@
             z-index: 1;
         }
 
-        /* 底部操作栏样式 */
+        /* 底部操作栏 */
         .bottom-bar {
             position: absolute;
             bottom: 0;
@@ -41,11 +41,11 @@
             justify-content: center;
             align-items: center;
             z-index: 100;
-            pointer-events: none; /* 让鼠标事件穿透，除非点到按钮 */
+            pointer-events: none;
         }
 
         .upload-btn-wrapper {
-            pointer-events: auto; /* 恢复按钮点击 */
+            pointer-events: auto;
             position: relative;
             overflow: hidden;
             display: inline-block;
@@ -96,7 +96,7 @@
 </head>
 <body>
 
-    <div class="hint-text">Space to Explode · Mouse to Wander</div>
+    <div class="hint-text">Space to Chaos · Scroll to Zoom · Mouse to Wander</div>
 
     <div class="bottom-bar">
         <div class="upload-btn-wrapper">
@@ -114,23 +114,24 @@
         
         let width, height;
         let particles = [];
-        let particleCount = 600; // 粒子数量
+        let particleCount = 800; // 稍微增加粒子数，效果更密
         let userPhotos = []; 
         
         // --- 核心状态变量 ---
-        // 鼠标位置
         let mouseX = window.innerWidth / 2;
         let mouseY = window.innerHeight / 2;
         
-        // 爱心当前的中心点（用于平滑跟随鼠标）
+        // 爱心中心点
         let heartCenterX = window.innerWidth / 2;
         let heartCenterY = window.innerHeight / 2;
 
-        // 爆发动画变量
-        let explosionScale = 0; // 0 = 正常, 15 = 爆发最大值
-        let isExploding = false; // 是否正在爆发中
-        let isImploding = false; // 是否正在收缩中
+        // 缩放控制 (默认 1.2 倍大小)
+        let globalScale = 1.2;
+        let targetGlobalScale = 1.2;
 
+        // 爆发控制
+        let isExploding = false;
+        
         function resize() {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
@@ -139,7 +140,7 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // 爱心方程判断 (用于初始化位置)
+        // 爱心方程
         function isInsideHeart(x, y, cx, cy, scale) {
             let relX = (x - cx) / scale;
             let relY = (y - cy) / -scale;
@@ -147,7 +148,7 @@
             return a * a * a - relX * relX * relY * relY * relY <= 0;
         }
 
-        // 绘制裁剪路径
+        // 绘制小爱心路径
         function drawSmallHeartPath(ctx, size) {
              ctx.beginPath();
              ctx.moveTo(0, -size * 0.25);
@@ -161,55 +162,56 @@
         class PhotoParticle {
             constructor(img) {
                 this.img = img;
-                // 计算相对坐标 (相对于爱心中心点的偏移量)
-                this.calculateRelativePosition();
+                this.calculateRelativePosition(); // 计算在爱心里的“家”
                 
                 this.size = Math.random() * 20 + 15; 
-                this.baseSize = this.size;
-                this.angle = Math.random() * Math.PI * 2 - Math.PI; 
+                this.angle = Math.random() * Math.PI * 2; 
                 
-                // 初始位置设为屏幕外，让它们飞进来
+                // 当前位置
                 this.x = Math.random() * width;
                 this.y = Math.random() * height;
+
+                // 爆发时的随机目标点
+                this.scatterTargetX = 0;
+                this.scatterTargetY = 0;
             }
 
             calculateRelativePosition() {
                  let attempt = 0;
-                 // 虚拟的一个中心点和缩放，用来计算相对位置
-                 const dummyCX = 0; 
-                 const dummyCY = 0;
-                 const dummyScale = Math.min(width, height) / 4; 
+                 const dummyScale = Math.min(width, height) / 3.5; // 基础大小比例调整
                  
                  while (attempt < 2000) {
-                     const testX = (Math.random() - 0.5) * width; // -width/2 到 width/2
+                     const testX = (Math.random() - 0.5) * width;
                      const testY = (Math.random() - 0.5) * height;
-
-                     if (isInsideHeart(testX, testY, dummyCX, dummyCY, dummyScale)) {
-                         this.relX = testX; // 记录相对偏移量
+                     // 使用虚拟中心(0,0)计算相对偏移
+                     if (isInsideHeart(testX, testY, 0, 0, dummyScale)) {
+                         this.relX = testX; 
                          this.relY = testY;
                          return;
                      }
                      attempt++;
                  }
-                 this.relX = 0;
-                 this.relY = 0;
+                 this.relX = 0; this.relY = 0;
+            }
+
+            // 重新分配随机爆发目标
+            randomizeScatterTarget() {
+                this.scatterTargetX = Math.random() * width;
+                this.scatterTargetY = Math.random() * height;
             }
 
             draw() {
                 if (!this.img) return;
                 ctx.save();
                 ctx.translate(this.x, this.y);
-                ctx.rotate(this.angle + (explosionScale * 0.1)); // 爆发时旋转加剧
+                ctx.rotate(this.angle); 
                 
-                // 爆发时粒子也会轻微变大
-                let currentSize = this.size * (1 + explosionScale * 0.1);
-
-                drawSmallHeartPath(ctx, currentSize);
+                drawSmallHeartPath(ctx, this.size);
                 ctx.clip(); 
 
                 const imgAspect = this.img.width / this.img.height;
                 let drawW, drawH;
-                const renderSize = currentSize * 1.2;
+                const renderSize = this.size * 1.2;
 
                 if (imgAspect > 1) {
                     drawH = renderSize;
@@ -223,36 +225,34 @@
             }
 
             update() {
-                // 1. 计算当前的“目标”中心点 (平滑跟随鼠标)
-                // lerp 算法: current = current + (target - current) * speed
+                // 1. 平滑处理整体缩放
+                globalScale += (targetGlobalScale - globalScale) * 0.1;
+
+                // 2. 鼠标跟随逻辑
                 heartCenterX += (mouseX - heartCenterX) * 0.05;
                 heartCenterY += (mouseY - heartCenterY) * 0.05;
 
-                // 2. 计算爆发倍率
+                let targetX, targetY;
+
                 if (isExploding) {
-                    // 爆发：快速变大
-                    explosionScale += (20 - explosionScale) * 0.08;
-                    if (explosionScale > 19.5) {
-                        isExploding = false;
-                        isImploding = true;
-                    }
-                } else if (isImploding) {
-                    // 收缩：缓慢变小
-                    explosionScale += (0 - explosionScale) * 0.03;
-                    if (explosionScale < 0.1) {
-                        explosionScale = 0;
-                        isImploding = false;
-                    }
+                    // 💥 爆发模式：飞向随机坐标
+                    targetX = this.scatterTargetX;
+                    targetY = this.scatterTargetY;
+                    // 爆发时移动速度快一点
+                    this.x += (targetX - this.x) * 0.08;
+                    this.y += (targetY - this.y) * 0.08;
+                    // 爆发时旋转起来
+                    this.angle += 0.1;
+                } else {
+                    // ❤️ 聚拢模式：回到爱心形状 (应用 globalScale)
+                    targetX = heartCenterX + this.relX * globalScale;
+                    targetY = heartCenterY + this.relY * globalScale;
+                    // 回归速度稍微慢一点，优雅一点
+                    this.x += (targetX - this.x) * 0.05;
+                    this.y += (targetY - this.y) * 0.05;
+                    // 慢慢回正角度 (可选，这里让它保持微转或者归零)
+                    this.angle += (0 - this.angle) * 0.05; 
                 }
-
-                // 3. 计算粒子的目标位置
-                // 目标 X = 当前爱心中心X + (相对偏移X * (1 + 爆发倍率))
-                let targetX = heartCenterX + this.relX * (1 + explosionScale);
-                let targetY = heartCenterY + this.relY * (1 + explosionScale);
-
-                // 4. 移动粒子 (弹性移动)
-                this.x += (targetX - this.x) * 0.1;
-                this.y += (targetY - this.y) * 0.1;
 
                 this.draw();
             }
@@ -268,9 +268,7 @@
         }
 
         function animate() {
-            // 使用半透明清除，制造一点点拖尾效果 (可选，这里用全清除保持清晰)
             ctx.clearRect(0, 0, width, height);
-            
             for (let i = 0; i < particles.length; i++) {
                 particles[i].update();
             }
@@ -299,31 +297,43 @@
             }
         });
 
-        // 鼠标移动更新目标坐标
+        // 鼠标移动
         window.addEventListener('mousemove', (e) => {
             mouseX = e.clientX;
             mouseY = e.clientY;
         });
 
-        // 鼠标离开窗口，爱心回到中心
-        window.addEventListener('mouseout', () => {
-             mouseX = width / 2;
-             mouseY = height / 2;
-        });
+        // 鼠标滚轮缩放 (核心修改)
+        window.addEventListener('wheel', (e) => {
+            e.preventDefault(); // 防止页面滚动
+            // deltaY > 0 是向下滚(缩小)，< 0 是向上滚(放大)
+            const zoomSpeed = 0.001;
+            targetGlobalScale += e.deltaY * -zoomSpeed;
+            
+            // 限制缩放范围：最小 0.1，最大 5 倍
+            targetGlobalScale = Math.min(Math.max(0.1, targetGlobalScale), 5.0);
+        }, { passive: false });
 
+        // 空格键爆发
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
                 e.preventDefault();
-                // 触发爆发状态
-                if (!isExploding && !isImploding) {
+                if (!isExploding) {
                     isExploding = true;
+                    // 给每个粒子重新分配一个随机目的地
+                    particles.forEach(p => p.randomizeScatterTarget());
+                    
+                    // 1.5秒后自动收缩回来 (你可以调整这个时间)
+                    setTimeout(() => {
+                        isExploding = false;
+                    }, 1200); 
                 }
             }
         });
 
         animate();
         
-        // 初始文字引导
+        // 初始引导
         function drawInitialHint() {
             if (userPhotos.length === 0) {
                 ctx.save();
@@ -332,7 +342,7 @@
                 ctx.textAlign = "center";
                 ctx.shadowColor = "#ff4d6d";
                 ctx.shadowBlur = 10;
-                ctx.fillText("✨ 请添加照片开启浪漫 ✨", width/2, height/2);
+                ctx.fillText("✨ 添加照片 · 滚轮缩放 · 空格爆发 ✨", width/2, height/2);
                 ctx.restore();
             }
         }
